@@ -1,6 +1,7 @@
+from __future__ import annotations
+
 import logging
 from decimal import Decimal
-from typing import Union
 
 import pytest
 
@@ -158,7 +159,7 @@ EG = Namespace("https://example.com/")
         ),
     ],
 )
-def test_function(expression: str, expected_result: Union[Identifier, type]) -> None:
+def test_function(expression: str, expected_result: Identifier | type) -> None:
     graph = Graph()
     query_string = """
     PREFIX eg: <https://example.com/>
@@ -167,9 +168,7 @@ def test_function(expression: str, expected_result: Union[Identifier, type]) -> 
     WHERE {
         BIND(???EXPRESSION_PLACEHOLDER??? AS ?o)
     }
-    """.replace(
-        "???EXPRESSION_PLACEHOLDER???", expression
-    )
+    """.replace("???EXPRESSION_PLACEHOLDER???", expression)
     result = graph.query(query_string)
     assert result.type == "CONSTRUCT"
     assert isinstance(result.graph, Graph)
