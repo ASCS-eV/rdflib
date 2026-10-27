@@ -345,7 +345,7 @@ class Converter:
             language = o.language
             term = context.find_term(str(p), datatype, language=language)
         else:
-            term = self._find_node_term(p, None)
+            node_term = term = self._find_node_term(p, None)
             if graph.value(o, RDF.first) is not None:
                 # find_term ranks terms differently for LIST: it can return an
                 # @list term, and it skips @set terms. That choice applies only
@@ -365,6 +365,16 @@ class Converter:
                             term = self._find_plain_term(p)
                         else:
                             term = list_term
+                # An @list container term holds one list: its value is the
+                # list. A further list for the same subject and property goes
+                # under the term without @list, or the IRI, as a list object.
+                if (
+                    term is not None
+                    and term is not node_term
+                    and LIST in term.container
+                    and term.name in s_node
+                ):
+                    term = self._find_plain_term(p)
 
         node = None
         use_set = not context.active
