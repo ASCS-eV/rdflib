@@ -211,7 +211,8 @@ class Converter:
 
             nodes = self.from_graph(g)
 
-            if not graphname and len(nodes) == 1:
+            # The name of a graph named by the base IRI shrinks to "".
+            if graphname is None and len(nodes) == 1:
                 obj.update(nodes[0])
             else:
                 if not nodes:
@@ -351,12 +352,14 @@ class Converter:
                     )
             elif LANG in term.container and language:
                 value = s_node.setdefault(p_key, {})
-                values = value.get(language)
                 node = str(o)
-                if values or SET in term.container:
+                if language in value:
+                    values = value[language]
                     if not isinstance(values, list):
                         value[language] = values = [values]
                     values.append(node)
+                elif SET in term.container:
+                    value[language] = [node]
                 else:
                     value[language] = node
                 return
@@ -385,8 +388,10 @@ class Converter:
             if any(graph.predicate_objects(o)):
                 self._pending_nodes.append(o)
 
-        value = s_node.get(p_key)
-        if value:
+        # Test the key, not the value: with an active context 0, "" and false
+        # are written as bare JSON values, which are falsy.
+        if p_key in s_node:
+            value = s_node[p_key]
             if not isinstance(value, list):
                 value = [value]
             value.append(node)
