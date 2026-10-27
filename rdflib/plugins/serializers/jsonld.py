@@ -158,6 +158,8 @@ class Converter:
         self.use_rdf_type = use_rdf_type
         # Statements per blank-node object, across every graph being converted.
         self._bnode_usages: Optional[Counter[Identifier]] = None
+        # Graphs per blank-node subject, across every graph being converted.
+        self._bnode_subject_graphs: Optional[Counter[Identifier]] = None
         self._pending_nodes: list[BNode] = []
         # Rejected prefixes are reusable only during a single graph conversion.
         self._rejected_lists: Optional[set[Identifier]] = None
@@ -195,6 +197,17 @@ class Converter:
 
         self._bnode_usages = Counter(
             o for g in graphs for o in g.objects() if isinstance(o, BNode)
+        )
+        # A cell can be described in another graph only when there is one.
+        self._bnode_subject_graphs = (
+            Counter(
+                s
+                for g in graphs
+                for s in g.subjects(unique=True)
+                if isinstance(s, BNode)
+            )
+            if len(graphs) > 1
+            else None
         )
 
         context = self.context
@@ -487,6 +500,18 @@ class Converter:
             return len(list(graph.subject_predicates(node)))
         return self._bnode_usages[node]
 
+    def _described_elsewhere(self, node: Identifier) -> bool:
+        """Whether `node` is a subject in more than one graph being converted.
+
+        `convert` counts the graphs of a dataset; for a single graph, or when
+        `to_collection` is called on its own, nothing is described elsewhere.
+        A cell that is a subject in another graph only counts once, and
+        `to_collection` refuses it for lacking entries in its own graph.
+        """
+        if self._bnode_subject_graphs is None:
+            return False
+        return self._bnode_subject_graphs[node] > 1
+
     def to_collection(self, graph: Graph, l_: Identifier):
         """Return the members of the `rdf:List` headed by `l_`, or None.
 
@@ -498,6 +523,13 @@ class Converter:
         left pointing at a node the output never defines. This is the
         "referenced once" condition of the Serialize RDF as JSON-LD Algorithm
         (JSON-LD 1.1 Processing Algorithms and API, section 8.4).
+
+        A cell that is the subject of a statement in another graph is refused
+        for the same reason: parsing `@list` creates fresh cells, so that
+        statement would end up describing a node that is no longer the cell.
+        Section 8.4 checks a cell's entries within its own graph only, but
+        explicit `rdf:first`/`rdf:rest` is always valid, so nothing is lost by
+        refusing.
         """
         rejected = self._rejected_lists
         if rejected is None:
@@ -516,6 +548,7 @@ class Converter:
                 or l_ in rejected
                 or isinstance(l_, URIRef)
                 or self._usages(graph, l_) != 1
+                or self._described_elsewhere(l_)
             ):
                 break
             chain.add(l_)
