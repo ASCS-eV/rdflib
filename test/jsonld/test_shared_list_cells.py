@@ -220,7 +220,8 @@ def test_a_list_cell_shared_across_named_graphs_round_trips(context):
     ds = Dataset()
     g1, g2 = ds.graph(NS.g1), ds.graph(NS.g2)
     cell = BNode()
-    g1.add((cell, RDF.first, Literal("a")))
+    # A node member, so that the coercing list term is eligible for the chain.
+    g1.add((cell, RDF.first, NS.a))
     g1.add((cell, RDF.rest, RDF.nil))
     g1.add((NS.s1, NS.p, cell))
     g2.add((NS.s2, NS.p, cell))
@@ -232,7 +233,7 @@ def test_a_list_cell_shared_across_named_graphs_round_trips(context):
     (in_g1,) = ds2.graph(NS.g1).objects(NS.s1, NS.p)
     (in_g2,) = ds2.graph(NS.g2).objects(NS.s2, NS.p)
     assert in_g1 == in_g2
-    assert (in_g1, RDF.first, Literal("a")) in ds2.graph(NS.g1)
+    assert (in_g1, RDF.first, NS.a) in ds2.graph(NS.g1)
     assert _non_empty_lists(data, list_terms=["p"]) == []
 
 

@@ -45,7 +45,7 @@ from rdflib.namespace import RDF, XSD
 from rdflib.serializer import Serializer
 from rdflib.term import BNode, IdentifiedNode, Identifier, Literal, URIRef
 
-from ..shared.jsonld.context import UNDEF, Context
+from ..shared.jsonld.context import UNDEF, Context, Term
 from ..shared.jsonld.keys import CONTEXT, GRAPH, ID, LANG, LIST, SET, VOCAB
 from ..shared.jsonld.util import _HAS_ORJSON, json, orjson
 
@@ -356,15 +356,7 @@ class Converter:
                 if list_term is not None and list_term is not term:
                     collection = self.to_collection(graph, o)
                     if collection is not None:
-                        if list_term.type and any(
-                            isinstance(v, Literal) for v in collection
-                        ):
-                            # A coercing term writes a literal member as a
-                            # bare string, which is read back as an IRI. The
-                            # chain is written as a list object instead.
-                            term = self._find_plain_term(p)
-                        else:
-                            term = list_term
+                        term = self._find_list_term(graph, p, list_term, collection)
                 # An @list container term holds one list: its value is the
                 # list. A further list for the same subject and property goes
                 # under the term without @list, or the IRI, as a list object.
@@ -402,7 +394,7 @@ class Converter:
                     if member is None:
                         member = self.to_raw_value(graph, s, v, nodemap)
                     node.append(member)
-                if term.type == ID:
+                if term.type in (ID, VOCAB):
                     self._pending_nodes.extend(
                         v
                         for v in collection
@@ -440,7 +432,11 @@ class Converter:
                 p_key = context.type_key
 
         if node is None:
-            node = self.to_raw_value(graph, s, o, nodemap)
+            if collection is not None:
+                # The chain is walked already; write it without a second walk.
+                node = self._list_object(graph, s, collection, nodemap)
+            else:
+                node = self.to_raw_value(graph, s, o, nodemap)
         elif isinstance(o, BNode) and term and LIST not in term.container:
             # Coercion emits only the reference; preserve its description too.
             if any(graph.predicate_objects(o)):
@@ -481,6 +477,35 @@ class Converter:
             return term
         return None
 
+    def _find_list_term(
+        self,
+        graph: Graph,
+        p: IdentifiedNode,
+        list_term: Term,
+        members: list[_ObjectType],
+    ):
+        """Return the context term for `p` with a list of `members`, or None.
+
+        `list_term` is the term found for the `@list` container, ranked by
+        coercion: `@id`, then `@vocab`, then none. IRI Compaction (JSON-LD
+        1.1 Processing Algorithms and API, section 6.2) gives a member
+        without `@value` the type `@id`, so a coercing term fits a list of
+        node references. A literal member would be read back as an IRI, and
+        so would the literal members of a nested list, which is written as a
+        list object. Such a list takes an `@list` term without a type, else
+        a plain term, else none.
+        """
+        if not list_term.type or all(
+            isinstance(member, URIRef)
+            or (isinstance(member, BNode) and graph.value(member, RDF.first) is None)
+            for member in members
+        ):
+            return list_term
+        term = self.context.find_term(str(p), UNDEF, LIST)
+        if term is not None and LIST in term.container:
+            return term
+        return self._find_plain_term(p)
+
     def type_coerce(self, o: Identifier, coerce_type: str):
         if coerce_type == ID:
             if isinstance(o, URIRef):
@@ -491,6 +516,11 @@ class Converter:
                 return o
         elif coerce_type == VOCAB and isinstance(o, URIRef):
             return self.context.to_symbol(o)
+        elif coerce_type == VOCAB and isinstance(o, BNode):
+            # A reference, like under @id. A blank node that heads a list
+            # would otherwise be inlined as a list object under the term, and
+            # its members would take the coercion.
+            return o.n3()
         elif isinstance(o, Literal) and str(o.datatype) == coerce_type:
             return o
         else:
@@ -502,11 +532,7 @@ class Converter:
         context = self.context
         coll = self.to_collection(graph, o)
         if coll is not None:
-            coll = [
-                self.to_raw_value(graph, s, lo, nodemap)
-                for lo in self.to_collection(graph, o)
-            ]
-            return {context.list_key: coll}
+            return self._list_object(graph, s, coll, nodemap)
         elif isinstance(o, BNode):
             self._pending_nodes.append(o)
             return {context.id_key: o.n3()}
@@ -534,6 +560,22 @@ class Converter:
                 return {context.value_key: v}
             else:
                 return v
+
+    def _list_object(
+        self,
+        graph: Graph,
+        s: IdentifiedNode,
+        members: list[_ObjectType],
+        nodemap: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Return a list object holding the raw values of `members`."""
+        return {
+            self.context.list_key: [
+                # type error: Argument 3 to "to_raw_value" of "Converter" has incompatible type "Node"; expected "Identifier"
+                self.to_raw_value(graph, s, member, nodemap)  # type: ignore[arg-type]
+                for member in members
+            ]
+        }
 
     def _usages(self, graph: Graph, node: Identifier) -> int:
         """Count the statements whose object is `node`.
