@@ -629,7 +629,11 @@ class Context:
                 coercion,
                 dfn.get(CONTAINER, UNDEF),
                 dfn.get(INDEX),
-                dfn.get(LANG, UNDEF),
+                # A term definition with @type has no language mapping (Create
+                # Term Definition, JSON-LD 1.1 Processing Algorithms and API,
+                # section 4.2.2, step 22). A null @type removes the type
+                # mapping only, so the term keeps one.
+                UNDEF if dfn.get(TYPE) is not None else dfn.get(LANG, UNDEF),
                 bool(rev),
                 context,
                 dfn.get(PREFIX),
@@ -780,6 +784,8 @@ class Term(NamedTuple):
     index: str | Defined | None = None  # type: ignore[assignment]
     #: The language of string values of this term.
     #: None if @language was explicitly null, ie the values have no language.
+    #: UNDEF if the term has no @language, or has a type coercion, which
+    #: leaves it without a language mapping (JSON-LD 1.1 API §4.2.2, step 22).
     #: See https://www.w3.org/TR/json-ld11/#string-internationalization (§4.2.4)
     language: str | Defined | None = UNDEF
     #: Indicates that this term is a reverse property (defined with @reverse
