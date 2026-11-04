@@ -362,6 +362,7 @@ def test_join_splits_the_fragment_at_the_first_hash(
 
 @pytest.mark.parametrize("format", ["turtle", "trig", "n3"])
 def test_parse_keeps_a_fragment_that_contains_a_hash(format: str) -> None:
+    """The parsers resolve such an IRI without reading its fragment as a path."""
     data = '@base <http://example.org/a/b> . <g#x/../y#z> <http://example.org/p> "v" .'
     dataset = Dataset()
     dataset.parse(data=data, format=format)
