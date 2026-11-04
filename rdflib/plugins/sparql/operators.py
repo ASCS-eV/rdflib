@@ -758,23 +758,43 @@ def MultiplicativeExpression(
     # we sometimes have nothing to do
     if other is None:
         return expr
+
+    # The operands are promoted to a common type, as op:numeric-multiply and
+    # op:numeric-divide do (SPARQL 1.1, section 17.3; XPath 3.1 Functions and
+    # Operators, section 4.2), and the result has that type.
+    res: Union[int, Decimal, float] = numeric(expr)
+    dt = expr.datatype
     try:
-        res: Union[Decimal, float]
-        res = Decimal(numeric(expr))
-        for op, f in zip(e.op, other):
-            f = numeric(f)
-
-            if type(f) == float:  # noqa: E721
-                res = float(res)
-
-            if op == "*":
-                res *= f
+        for op, term in zip(e.op, other):
+            n = numeric(term)
+            dt = type_promotion(dt, term.datatype)
+            if dt in (XSD.float, XSD.double):
+                res, n = float(res), float(n)
+                res = res * n if op == "*" else _float_divide(res, n)
+            elif op == "*":
+                res = res * n
             else:
-                res /= f
+                # Dividing integers gives a decimal.
+                res = Decimal(res) / Decimal(n)
+                dt = XSD.decimal
     except (InvalidOperation, ZeroDivisionError):
         raise SPARQLError("divide by 0")
 
-    return Literal(res)
+    return Literal(res, datatype=dt)
+
+
+def _float_divide(dividend: float, divisor: float) -> float:
+    """Divide two floats as op:numeric-divide does for xs:float and xs:double.
+
+    Dividing by zero gives INF, -INF or NaN (XPath 3.1 Functions and
+    Operators, section 4.2.4), where Python raises an exception.
+    """
+    try:
+        return dividend / divisor
+    except ZeroDivisionError:
+        if dividend == 0 or math.isnan(dividend):
+            return math.nan
+        return math.copysign(math.inf, dividend) * math.copysign(1.0, divisor)
 
 
 # type error: Missing return statement
