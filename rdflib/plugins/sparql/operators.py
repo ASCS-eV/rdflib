@@ -16,7 +16,7 @@ import re
 import uuid
 import warnings
 from collections.abc import Callable
-from decimal import ROUND_HALF_DOWN, ROUND_HALF_UP, Decimal, InvalidOperation
+from decimal import ROUND_HALF_DOWN, ROUND_HALF_UP, Decimal
 from functools import reduce
 from typing import Any, NoReturn, Union, overload
 from urllib.parse import quote
@@ -761,15 +761,16 @@ def MultiplicativeExpression(
 
     # The operands are promoted to a common type, as op:numeric-multiply and
     # op:numeric-divide do (SPARQL 1.1, section 17.3; XPath 3.1 Functions and
-    # Operators, section 4.2), and the result has that type.
-    res: Union[int, Decimal, float] = numeric(expr)
+    # Operators, section 4.2), and the result has that type. As in
+    # AdditiveExpression, xsd:float values are computed in double precision.
+    res: Union[int, Decimal, float] = _number(expr)
     dt = expr.datatype
     try:
         for op, term in zip(e.op, other):
-            n = numeric(term)
+            n = _number(term)
             dt = type_promotion(dt, term.datatype)
             if dt in (XSD.float, XSD.double):
-                res, n = float(res), float(n)
+                res, n = _to_float(res), _to_float(n)
                 res = res * n if op == "*" else _float_divide(res, n)
             elif op == "*":
                 res = res * n
@@ -777,10 +778,27 @@ def MultiplicativeExpression(
                 # Dividing integers gives a decimal.
                 res = Decimal(res) / Decimal(n)
                 dt = XSD.decimal
-    except (InvalidOperation, ZeroDivisionError):
+        return Literal(res, datatype=dt)
+    except ZeroDivisionError:
         raise SPARQLError("divide by 0")
+    except (ArithmeticError, ValueError) as error:
+        raise SPARQLError("numeric overflow or invalid operation: %r" % error)
 
-    return Literal(res, datatype=dt)
+
+def _number(term: Literal) -> Any:
+    """The value of a numeric literal, or a type error if it is ill-typed."""
+    value = numeric(term)
+    if not isinstance(value, (int, Decimal, float)):
+        raise SPARQLTypeError("%r is not a valid %s" % (term, term.datatype))
+    return value
+
+
+def _to_float(value: Union[int, Decimal, float]) -> float:
+    """Cast to xs:double; an integer too large for a double is INF or -INF."""
+    try:
+        return float(value)
+    except OverflowError:
+        return math.inf if value > 0 else -math.inf
 
 
 def _float_divide(dividend: float, divisor: float) -> float:
