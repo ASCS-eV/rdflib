@@ -1862,6 +1862,27 @@ def _writeXML(  # noqa: N802
     return s
 
 
+def _float_lexical(value: float) -> str:
+    """The lexical form of a float as an `xsd:double` or `xsd:float`.
+
+    The special values are written `INF`, `-INF` and `NaN`, the only spellings
+    of them in the lexical space of these types (XML Schema 1.1 Part 2, section
+    3.3.5.2), instead of Python's `inf` and `nan`. Other values keep the form
+    that `str()` gives them.
+
+    Args:
+        value: The float.
+
+    Returns:
+        The lexical form.
+    """
+    if math.isnan(value):
+        return "NaN"
+    if math.isinf(value):
+        return "INF" if value > 0 else "-INF"
+    return str(value)
+
+
 def _unhexlify(value: str | bytes | Literal) -> bytes:
     # In Python 3.2, unhexlify does not support str (only bytes)
     if isinstance(value, str):
@@ -2144,7 +2165,7 @@ _GenericPythonToXSDRules: list[
     tuple[type[Any], tuple[Callable[[Any], str | bytes] | None, str | None]]
 ] = [
     (str, (None, None)),
-    (float, (None, _XSD_DOUBLE)),
+    (float, (_float_lexical, _XSD_DOUBLE)),
     (bool, (lambda i: str(i).lower(), _XSD_BOOLEAN)),
     (int, (None, _XSD_INTEGER)),
     (long_type, (None, _XSD_INTEGER)),
