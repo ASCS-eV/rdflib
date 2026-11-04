@@ -120,3 +120,24 @@ def test_sparql_str_of_a_special_value_is_its_xsd_lexical_form() -> None:
 def test_other_lexical_forms_are_unchanged(literal: Literal, lexical: str) -> None:
     """Guard: finite values, unnormalized literals and strings keep their form."""
     assert str(literal) == lexical
+
+
+@pytest.mark.parametrize(
+    ("lexical", "written"),
+    [
+        pytest.param("infinity", "INF", id="infinity"),
+        pytest.param("INFINITY", "INF", id="uppercase-infinity"),
+        pytest.param("-Infinity", "-INF", id="minus-infinity"),
+        pytest.param("NAN", "NaN", id="uppercase-nan"),
+        pytest.param("inf", "INF", id="inf"),
+        pytest.param("+INF", "+INF", id="plus-INF-kept"),
+        pytest.param("1e400", "1e400", id="overflowing-numeral-kept"),
+    ],
+)
+def test_turtle_writes_an_unnormalized_special_value_in_an_xsd_form(
+    lexical: str, written: str
+) -> None:
+    """Python's spellings are replaced; valid XSD forms are kept as they are."""
+    literal = Literal(lexical, datatype=XSD.double, normalize=False)
+
+    assert literal.n3() == f'"{written}"^^<{XSD.double}>'

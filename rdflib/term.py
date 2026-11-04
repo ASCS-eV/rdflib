@@ -1710,14 +1710,12 @@ class Literal(Identifier):
             if datatype in _NUMERIC_INF_NAN_LITERAL_TYPES:
                 try:
                     v = float(self)
-                    if math.isinf(v):
-                        # py string reps: float: 'inf', Decimal: 'Infinity"
-                        # both need to become "INF" in xsd datatypes
-                        encoded = encoded.replace("inf", "INF").replace(
-                            "Infinity", "INF"
-                        )
-                    if math.isnan(v):
-                        encoded = encoded.replace("nan", "NaN")
+                    # An unnormalized lexical form may spell a special value
+                    # as Python does, such as "inf", "Infinity" or "nan".
+                    if (math.isinf(v) or math.isnan(v)) and not (
+                        _XSD_DOUBLE_LEXICAL.fullmatch(self)
+                    ):
+                        encoded = f'"{_float_lexical(v)}"'
                 except ValueError:
                     # if we can't cast to float something is wrong, but we can
                     # still serialize. Warn user about it
@@ -1860,6 +1858,13 @@ def _writeXML(  # noqa: N802
     if s == b"<rdflibtoplevelelement/>":
         s = b""
     return s
+
+
+# The lexical space of xsd:double and xsd:float (XML Schema 1.1 Part 2,
+# sections 3.3.4.2 and 3.3.5.2).
+_XSD_DOUBLE_LEXICAL = re.compile(
+    r"(\+|-)?([0-9]+(\.[0-9]*)?|\.[0-9]+)([Ee](\+|-)?[0-9]+)?|(\+|-)?INF|NaN"
+)
 
 
 def _float_lexical(value: float) -> str:
