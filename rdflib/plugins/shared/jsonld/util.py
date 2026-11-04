@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import pathlib
+import re
 from html.parser import HTMLParser
 from io import StringIO, TextIOBase, TextIOWrapper
 from typing import IO, TYPE_CHECKING, Any, TextIO, Union
@@ -38,6 +39,7 @@ from rdflib.parser import (
     URLInputSource,
     create_input_source,
 )
+from rdflib.plugins.parsers.notation3 import join
 
 
 def source_to_json(
@@ -204,8 +206,19 @@ def split_iri(iri: str) -> tuple[str, str | None]:
     return iri, None
 
 
+# The scheme of an absolute IRI (RFC 3986, section 3.1). urlsplit() is not
+# used for this, as it strips leading spaces and raises on some inputs.
+_SCHEME = re.compile(r"[A-Za-z][A-Za-z0-9+.-]*:")
+
+
 def norm_url(base: str, url: str) -> str:
     """
+    Resolve a reference against a base IRI.
+
+    Against an absolute base, this is reference resolution as RFC 3986,
+    section 5.2, describes it, done by the resolver of the N3 parser. It works
+    for any scheme, and keeps empty components and repeated slashes.
+
     ```python
     >>> norm_url('http://example.org/', '/one')
     'http://example.org/one'
@@ -219,12 +232,47 @@ def norm_url(base: str, url: str) -> str:
     'http://example.net/one'
     >>> norm_url('http://example.org/', 'http://example.org//one')
     'http://example.org//one'
+    >>> norm_url('http://example.org/one', '//example.net')
+    'http://example.net'
+    >>> norm_url('http://example.org', '?q')
+    'http://example.org?q'
+    >>> norm_url('http://example.org/one', 'two?')
+    'http://example.org/two?'
+
+    ```
+
+    A relative path against a base without a hierarchical path, such as a
+    URN, is joined as a path below the base instead:
+
+    ```python
+    >>> norm_url('urn:ns:test', 'three')
+    'urn:ns:test/three'
 
     ```
     """
     # Same-document references must not change the base path.
     if not url or url.startswith("#"):
         return (base or "").split("#", 1)[0] + url
+
+    # An absolute IRI is not resolved.
+    if _SCHEME.match(url):
+        return url
+
+    if base and _SCHEME.match(base):
+        # Without a valid scheme, a colon in the first segment is part of a
+        # relative path, which RFC 3986, section 4.2, writes with a leading
+        # "./" so that it can't be read as a scheme.
+        if ":" in re.split("[/?#]", url, maxsplit=1)[0]:
+            reference = "./" + url
+        else:
+            reference = url
+        try:
+            return join(base, reference)
+        except ValueError:
+            # join refuses a relative path against a base without a
+            # hierarchical path, such as a URN, whose whole path RFC 3986
+            # would replace. Keep joining it below the base, as before.
+            pass
 
     if "://" in url:
         return url
