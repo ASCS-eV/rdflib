@@ -1,13 +1,13 @@
 """
-Infinite and NaN doubles and floats have the lexical forms ``INF``, ``-INF``
-and ``NaN``.
+Infinite and NaN doubles and floats have the lexical forms `INF`, `-INF` and
+`NaN`.
 
-These are the only spellings of the special values in the lexical space of
-``xsd:double`` and ``xsd:float`` (XML Schema 1.1 Part 2, section 3.3.5.2). A
-literal took its lexical form from Python's ``str()`` instead, ``inf`` and
-``nan``. Only Turtle and N3 output corrected that (issue #655); N-Triples,
-N-Quads, RDF/XML and SPARQL ``STR()`` wrote the Python spelling, and reading a
-valid ``"INF"^^xsd:double`` turned it into ``"inf"``.
+These are the canonical forms of the special values of `xsd:double` and
+`xsd:float` (XML Schema 1.1 Part 2, appendix E.1). A literal took its lexical
+form from Python's `str()` instead, `inf` and `nan`, which are not in the
+lexical space of these types at all. Only Turtle and N3 output corrected that
+(#658). N-Triples, N-Quads, RDF/XML and SPARQL wrote the Python spelling, and
+reading a valid `"INF"^^xsd:double` turned it into `"inf"`.
 """
 
 from __future__ import annotations
@@ -16,7 +16,7 @@ import math
 
 import pytest
 
-from rdflib import XSD, Dataset, Graph, Literal, URIRef
+from rdflib import XSD, Dataset, Graph, Literal, URIRef, Variable
 
 S = URIRef("http://example.org/s")
 P = URIRef("http://example.org/p")
@@ -28,6 +28,7 @@ P = URIRef("http://example.org/p")
         pytest.param(Literal(math.inf), "INF", id="float-inf"),
         pytest.param(Literal(-math.inf), "-INF", id="float-minus-inf"),
         pytest.param(Literal(math.nan), "NaN", id="float-nan"),
+        pytest.param(Literal(-math.nan), "NaN", id="float-minus-nan"),
         pytest.param(Literal(math.inf, datatype=XSD.float), "INF", id="inf-as-float"),
         pytest.param(Literal("INF", datatype=XSD.double), "INF", id="typed-INF"),
         pytest.param(Literal("+INF", datatype=XSD.double), "INF", id="typed-plus-INF"),
@@ -36,6 +37,11 @@ P = URIRef("http://example.org/p")
         ),
         pytest.param(Literal("NaN", datatype=XSD.double), "NaN", id="typed-NaN"),
         pytest.param(Literal("INF", datatype=XSD.float), "INF", id="typed-float-INF"),
+        pytest.param(
+            Literal("inf", datatype=XSD.double, normalize=False).normalize(),
+            "INF",
+            id="normalized",
+        ),
     ],
 )
 def test_a_special_value_has_its_xsd_lexical_form(
@@ -45,9 +51,11 @@ def test_a_special_value_has_its_xsd_lexical_form(
     assert literal == Literal(lexical, datatype=literal.datatype)
 
 
-@pytest.mark.parametrize("format", ["nt", "nquads", "xml"])
+@pytest.mark.parametrize(
+    "format", ["nt", "nquads", "xml", "pretty-xml", "trix", "hext", "patch"]
+)
 def test_special_values_are_written_in_their_xsd_lexical_forms(format: str) -> None:
-    g = Dataset() if format == "nquads" else Graph()
+    g = Dataset() if format in ("nquads", "patch") else Graph()
     for value in (math.inf, -math.inf, math.nan):
         g.add((S, P, Literal(value)))
 
@@ -69,6 +77,16 @@ def test_special_values_round_trip_through_n_triples_unchanged() -> None:
     g = Graph().parse(data=data, format="nt")
 
     assert sorted(g.serialize(format="nt").splitlines()) == sorted(data.splitlines())
+
+
+def test_a_sparql_pattern_with_a_special_value_matches_parsed_data() -> None:
+    g = Graph().parse(
+        data=f'<{S}> <{P}> "INF"^^<{XSD.double}>, "NaN"^^<{XSD.double}> .',
+        format="turtle",
+    )
+    query = 'SELECT ?s { ?s ?p "INF"^^xsd:double , "NaN"^^xsd:double }'
+
+    assert g.query(query, initNs={"xsd": XSD}).bindings == [{Variable("s"): S}]
 
 
 def test_sparql_str_of_a_special_value_is_its_xsd_lexical_form() -> None:

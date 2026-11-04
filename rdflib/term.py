@@ -1865,10 +1865,11 @@ def _writeXML(  # noqa: N802
 def _float_lexical(value: float) -> str:
     """The lexical form of a float as an `xsd:double` or `xsd:float`.
 
-    The special values are written `INF`, `-INF` and `NaN`, the only spellings
-    of them in the lexical space of these types (XML Schema 1.1 Part 2, section
-    3.3.5.2), instead of Python's `inf` and `nan`. Other values keep the form
-    that `str()` gives them.
+    The special values are written in their canonical forms, `INF`, `-INF` and
+    `NaN` (XML Schema 1.1 Part 2, appendix E.1, `specialRepCanonicalMap`).
+    Python's `inf` and `nan` are not in the lexical space of these types
+    (sections 3.3.4.2 and 3.3.5.2). Other values keep the form that `str()`
+    gives them.
 
     Args:
         value: The float.
