@@ -1710,10 +1710,14 @@ class Literal(Identifier):
             if datatype in _NUMERIC_INF_NAN_LITERAL_TYPES:
                 try:
                     v = float(self)
-                    # An unnormalized lexical form may spell a special value
-                    # as Python does, such as "inf", "Infinity" or "nan".
-                    if (math.isinf(v) or math.isnan(v)) and not (
-                        _XSD_DOUBLE_LEXICAL.fullmatch(self)
+                    # A special value spelled as Python does, such as "inf",
+                    # "Infinity" (also a Decimal's lexical form) or "nan", is
+                    # written in its XSD form. A numeral that overflows to
+                    # infinity is kept as it is.
+                    if (
+                        (math.isinf(v) or math.isnan(v))
+                        and not _XSD_DOUBLE_LEXICAL.fullmatch(self)
+                        and not any(c.isdigit() for c in self)
                     ):
                         encoded = f'"{_float_lexical(v)}"'
                 except ValueError:
@@ -1861,8 +1865,9 @@ def _writeXML(  # noqa: N802
 
 
 # The lexical space of xsd:double and xsd:float (XML Schema 1.1 Part 2,
-# sections 3.3.4.2 and 3.3.5.2).
-_XSD_DOUBLE_LEXICAL = re.compile(
+# sections 3.3.4.2 and 3.3.5.2). _literal_n3 also uses it for xsd:decimal,
+# whose lexical space has no special values, to keep valid forms as they are.
+_XSD_DOUBLE_LEXICAL = compile(
     r"(\+|-)?([0-9]+(\.[0-9]*)?|\.[0-9]+)([Ee](\+|-)?[0-9]+)?|(\+|-)?INF|NaN"
 )
 

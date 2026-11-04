@@ -132,12 +132,37 @@ def test_other_lexical_forms_are_unchanged(literal: Literal, lexical: str) -> No
         pytest.param("inf", "INF", id="inf"),
         pytest.param("+INF", "+INF", id="plus-INF-kept"),
         pytest.param("1e400", "1e400", id="overflowing-numeral-kept"),
+        pytest.param(" 1e400", " 1e400", id="padded-overflowing-numeral-kept"),
     ],
 )
-def test_turtle_writes_an_unnormalized_special_value_in_an_xsd_form(
+def test_n3_writes_an_unnormalized_special_value_in_an_xsd_form(
     lexical: str, written: str
 ) -> None:
-    """Python's spellings are replaced; valid XSD forms are kept as they are."""
+    """Python's spellings are replaced; numerals and valid XSD forms are kept."""
     literal = Literal(lexical, datatype=XSD.double, normalize=False)
 
     assert literal.n3() == f'"{written}"^^<{XSD.double}>'
+
+
+def test_n3_keeps_an_overflowing_decimal_numeral() -> None:
+    """Guard: a decimal too large for a float is not rewritten as INF."""
+    lexical = " 1" + "0" * 400
+    literal = Literal(lexical, datatype=XSD.decimal, normalize=False)
+
+    assert literal.n3() == f'"{lexical}"^^<{XSD.decimal}>'
+
+
+@pytest.mark.parametrize("datatype", [XSD.double, XSD.float])
+def test_turtle_writes_an_unnormalized_python_spelling_in_an_xsd_form(
+    datatype: URIRef,
+) -> None:
+    g = Graph()
+    for value in ("infinity", "-Infinity", "NAN"):
+        g.add((S, P, Literal(value, datatype=datatype, normalize=False)))
+
+    data = g.serialize(format="turtle")
+
+    for lexical in ("INF", "-INF", "NaN"):
+        assert f'"{lexical}"^^' in data
+    for python_form in ("infinity", "Infinity", "NAN"):
+        assert python_form not in data
