@@ -273,7 +273,16 @@ class Context:
         override_protected: bool = False,
     ):
         if self.version < 1.1 or prefix is None:
-            prefix = isinstance(idref, str) and idref.endswith(URI_GEN_DELIMS)
+            # Only a term without ":" and "/" can be a prefix (JSON-LD 1.1
+            # Processing Algorithms and API, Create Term Definition, step
+            # 14.2.5). With a "/" before its first ":", a value such as "/a/:b"
+            # is a relative IRI reference, not a compact IRI.
+            prefix = (
+                ":" not in name
+                and "/" not in name
+                and isinstance(idref, str)
+                and idref.endswith(URI_GEN_DELIMS)
+            )
 
         if not self._accept_term(name):
             return

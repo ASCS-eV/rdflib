@@ -138,6 +138,55 @@ def test_prefix_like_vocab():
     assert term.id == "ex:term"
 
 
+@pytest.mark.parametrize(
+    ("vocab", "term", "value", "expected"),
+    [
+        # A term without ":" and "/" whose IRI ends with a gen-delim is a prefix.
+        ("http://other.org/", "a", "a:b", "http://other.org/a/b"),
+        # A term with a "/" is not, so the value is resolved against the base.
+        # Each context is valid: the term expands to its IRI through @vocab
+        # (step 14.2.4.2).
+        ("http://other.org", "/a/", "/a/:b", "http://example.org/a/:b"),
+        ("http://other.org/", "a/", "a/:b", "http://example.org/ns/a/:b"),
+    ],
+)
+def test_only_a_term_without_a_slash_is_a_prefix(
+    vocab: str, term: str, value: str, expected: str
+) -> None:
+    """JSON-LD 1.1 API, Create Term Definition, step 14.2.5."""
+    ctx = Context(
+        {
+            "@base": "http://example.org/ns/doc",
+            "@vocab": vocab,
+            term: "http://other.org/a/",
+        }
+    )
+
+    assert ctx.expand(value, use_vocab=False) == expected
+
+
+def test_a_term_with_a_colon_is_not_a_prefix() -> None:
+    ctx = Context({"ex": "http://example.org/", "ex:a/": "http://example.org/a/"})
+
+    assert ctx.terms["ex"].prefix is True
+    assert ctx.terms["ex:a/"].prefix is False
+
+
+def test_a_reference_like_a_compact_iri_with_a_slash_round_trips() -> None:
+    iri = URIRef("http://example.org/a/:b")
+    context = {
+        "@base": "http://example.org/ns/doc",
+        "@vocab": "http://other.org",
+        "/a/": "http://other.org/a/",
+    }
+    g = Graph()
+    g.add((URIRef("http://example.org/s"), URIRef("http://example.org/p"), iri))
+
+    data = g.serialize(format="json-ld", context=context)
+
+    assert list(Graph().parse(data=data, format="json-ld").objects()) == [iri]
+
+
 # Mock external sources loading
 SOURCES: dict[str, dict[str, Any]] = {}
 # type error: Module "rdflib.plugins.shared.jsonld.context" does not explicitly export attribute "source_to_json"
