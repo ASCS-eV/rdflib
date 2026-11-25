@@ -50,7 +50,7 @@ from .keys import (
     VERSION,
     VOCAB,
 )
-from .util import norm_url, source_to_json, split_iri
+from .util import _SCHEME, norm_url, source_to_json, split_iri
 
 NODE_KEYS = {GRAPH, ID, INCLUDED, JSON, LIST, NEST, NONE, REV, SET, TYPE, VALUE, LANG}
 
@@ -69,6 +69,17 @@ UNDEF = Defined.UNDEF
 
 # From <https://tools.ietf.org/html/rfc3986#section-2.2>
 URI_GEN_DELIMS = (":", "/", "?", "#", "[", "]", "@")
+
+
+def _may_be_prefix(name: str) -> bool:
+    """Whether a term with this name may be the prefix of a compact IRI.
+
+    Only a term without ":" and "/" may (JSON-LD 1.1 Processing Algorithms and
+    API, Create Term Definition, step 14.2.5). With a "/" before its first
+    ":", a value such as "/a/:b" is a relative IRI reference, not a compact IRI.
+    """
+    return ":" not in name and "/" not in name
+
 
 _ContextSourceType = Union[
     list[Union[dict[str, Any], str, None]], dict[str, Any], str, None
@@ -273,13 +284,8 @@ class Context:
         override_protected: bool = False,
     ):
         if self.version < 1.1 or prefix is None:
-            # Only a term without ":" and "/" can be a prefix (JSON-LD 1.1
-            # Processing Algorithms and API, Create Term Definition, step
-            # 14.2.5). With a "/" before its first ":", a value such as "/a/:b"
-            # is a relative IRI reference, not a compact IRI.
             prefix = (
-                ":" not in name
-                and "/" not in name
+                _may_be_prefix(name)
                 and isinstance(idref, str)
                 and idref.endswith(URI_GEN_DELIMS)
             )
@@ -405,6 +411,11 @@ class Context:
             ns = self.terms.get(pfx)
             if ns and ns.prefix and ns.id:
                 return ns.id + local
+            if use_vocab and self.vocab and not _SCHEME.match(term_curie_or_iri):
+                # Neither a compact IRI nor an absolute IRI, such as "/a/:b":
+                # like a term, it is relative to the vocabulary mapping (IRI
+                # Expansion, step 7).
+                return self.vocab + term_curie_or_iri
         elif is_term and use_vocab:
             if self.vocab:
                 return self.vocab + term_curie_or_iri
@@ -690,7 +701,16 @@ class Context:
         nxt: str | None
         # type error: Argument 1 to "_prep_expand" of "Context" has incompatible type "Optional[str]"; expected "str"
         is_term, pfx, nxt = self._prep_expand(expr)  # type: ignore[arg-type]
-        if pfx:
+        if pfx and not _may_be_prefix(pfx):
+            # Not a compact IRI: like a term, a value such as "/a/:b" is
+            # relative to the vocabulary mapping (IRI Expansion, steps 5 and 7).
+            # type error: Argument 2 to "_get_source_id" of "Context" has incompatible type "Optional[str]"; expected "str"
+            iri = self._get_source_id(source, expr)  # type: ignore[arg-type]
+            if iri is None:
+                # type error: Unsupported operand types for + ("str" and "None")
+                return self.vocab + expr if self.vocab else expr  # type: ignore[operator]
+            nxt = iri
+        elif pfx:
             iri = self._get_source_id(source, pfx)
             if iri is None:
                 if pfx + ":" == self.vocab:
