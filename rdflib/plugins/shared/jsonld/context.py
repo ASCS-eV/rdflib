@@ -70,17 +70,6 @@ UNDEF = Defined.UNDEF
 # From <https://tools.ietf.org/html/rfc3986#section-2.2>
 URI_GEN_DELIMS = (":", "/", "?", "#", "[", "]", "@")
 
-
-def _may_be_prefix(name: str) -> bool:
-    """Whether a term with this name may be the prefix of a compact IRI.
-
-    Only a term without ":" and "/" may (JSON-LD 1.1 Processing Algorithms and
-    API, Create Term Definition, step 14.2.5). With a "/" before its first
-    ":", a value such as "/a/:b" is a relative IRI reference, not a compact IRI.
-    """
-    return ":" not in name and "/" not in name
-
-
 _ContextSourceType = Union[
     list[Union[dict[str, Any], str, None]], dict[str, Any], str, None
 ]
@@ -111,6 +100,19 @@ _ExpandedTermDict = TypedDict(
 #: Anything that is a valid JSON-LD term definition.
 #: See https://www.w3.org/TR/json-ld11/#context-definitions (§9.15)
 _TermSerialization: TypeAlias = _ExpandedTermDict | str | None
+
+
+def _may_be_prefix(name: str) -> bool:
+    """Whether a term with this name may be the prefix of a compact IRI.
+
+    Only a term without ":" and "/" may (JSON-LD 1.1 Processing Algorithms and
+    API, Create Term Definition, step 14.2.5). With a "/" before its first
+    ":", a value such as "/a/:b" is a relative IRI reference, not a compact IRI.
+    This is about values: a term's own name, such as "/a/:b" without an @id,
+    takes the IRI of the term before its first ":" whatever that term is
+    (step 15).
+    """
+    return ":" not in name and "/" not in name
 
 
 class Context:
@@ -650,9 +652,11 @@ class Context:
                 idref = str(RDF.type)
                 coercion = VOCAB
             elif idref is not UNDEF:
-                idref = self._rec_expand(source, idref)
+                # An @id equal to the term is read as the term's own name
+                # (Create Term Definition, steps 14 and 15).
+                idref = self._rec_expand(source, idref, term_name=idref == name)
             elif ":" in name:
-                idref = self._rec_expand(source, name)
+                idref = self._rec_expand(source, name, term_name=True)
             elif self.vocab:
                 idref = self.vocab + name
 
@@ -675,7 +679,7 @@ class Context:
             if isinstance(dfn, str):
                 if not self._accept_term(dfn):
                     return
-                idref = self._rec_expand(source, dfn)
+                idref = self._rec_expand(source, dfn, term_name=dfn == name)
             # type error: Argument 2 to "add_term" of "Context" has incompatible type "Optional[str]"; expected "str"
             self.add_term(
                 name,
@@ -693,7 +697,11 @@ class Context:
                     v.remove(name)
 
     def _rec_expand(
-        self, source: dict[str, Any], expr: str | None, prev: str | None = None
+        self,
+        source: dict[str, Any],
+        expr: str | None,
+        prev: str | None = None,
+        term_name: bool = False,
     ) -> str | None:
         if expr == prev or expr in NODE_KEYS:
             return expr
@@ -701,7 +709,7 @@ class Context:
         nxt: str | None
         # type error: Argument 1 to "_prep_expand" of "Context" has incompatible type "Optional[str]"; expected "str"
         is_term, pfx, nxt = self._prep_expand(expr)  # type: ignore[arg-type]
-        if pfx and not _may_be_prefix(pfx):
+        if pfx and not term_name and not _may_be_prefix(pfx):
             # Not a compact IRI: like a term, a value such as "/a/:b" is
             # relative to the vocabulary mapping (IRI Expansion, steps 5 and 7).
             # type error: Argument 2 to "_get_source_id" of "Context" has incompatible type "Optional[str]"; expected "str"

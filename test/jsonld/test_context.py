@@ -182,6 +182,22 @@ def test_only_a_term_without_a_slash_is_a_prefix(
     assert ctx.terms["t"].id == expected_property
 
 
+def test_a_term_name_with_a_colon_takes_the_iri_of_its_prefix_term() -> None:
+    """Create Term Definition, step 15: no prefix flag is needed for a name."""
+    ctx = Context(
+        {
+            "@vocab": "http://other.org",
+            "/a/": "http://other.org/a/",
+            # No @id, and an @id equal to the term, which step 14 leaves to 15.
+            "/a/:b": {"@type": "@id"},
+            "/a/:c": "/a/:c",
+        }
+    )
+
+    assert ctx.terms["/a/:b"].id == "http://other.org/a/b"
+    assert ctx.terms["/a/:c"].id == "http://other.org/a/c"
+
+
 def test_a_term_with_a_colon_is_not_a_prefix() -> None:
     ctx = Context({"ex": "http://example.org/", "ex:a/": "http://example.org/a/"})
 
