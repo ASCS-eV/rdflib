@@ -8,6 +8,7 @@ import json
 from functools import wraps
 from pathlib import Path
 from typing import Any, Literal, Optional, Union, assert_type
+from urllib.parse import urljoin
 
 import pytest
 
@@ -113,6 +114,105 @@ def test_resolving_iris():
     assert ctx.resolve("../../") == "http://example.org/"
 
 
+@pytest.mark.parametrize(
+    ("base", "iri", "expected"),
+    [
+        ("http://example.org/ns/doc", "http://example.org/ns/doc", ""),
+        # The base itself is the empty reference, whatever the form of the base.
+        ("urn:x:doc", "urn:x:doc", ""),
+        ("file:/tmp/doc.jsonld", "file:/tmp/doc.jsonld", ""),
+        ("HTTP://example.org/ns/doc", "HTTP://example.org/ns/doc", ""),
+        ("http://example.org/ns/doc", "http://example.org/other", "/other"),
+        ("http://example.org/ns/doc", "http://example.org/", "/"),
+        # These share the base's "scheme://host" as a string only, or keep a
+        # query, fragment or port that an absolute path cannot express.
+        ("http://example.org/ns/doc", "http://example.org", None),
+        ("http://example.org/ns/doc", "http://example.org.evil/x", None),
+        ("http://example.org/ns/doc", "http://example.org?q=1", None),
+        ("http://example.org/ns/doc", "http://example.org#f", None),
+        ("http://example.org/ns/doc", "http://example.org:8080/x", None),
+        # A network-path reference would name another host.
+        ("http://example.org/ns/doc", "http://example.org//x", None),
+        # Resolving would remove the dot segments.
+        ("http://example.org/ns/doc", "http://example.org/a/../b", None),
+        # The base drops its fragment, so "" would lose it; a path keeps it.
+        ("http://example.org/ns/doc#f", "http://example.org/ns/doc#f", "/ns/doc#f"),
+        ("http://example.org/ns/doc", "http://other.example/x", None),
+        # Plain paths, which need no resolving to check.
+        ("http://example.org/ns/doc", "http://example.org/a/b/", "/a/b/"),
+        (
+            "http://example.org/ns/doc",
+            "http://example.org/.well-known/x",
+            "/.well-known/x",
+        ),
+        ("http://example.org/ns/doc", "http://example.org/a?q=1#f", "/a?q=1#f"),
+        ("http://example.org/ns/doc", "http://example.org/x%20y", "/x%20y"),
+        # Resolving keeps an empty query and empty path segments (RFC 3986,
+        # section 5.2), and joins a path for any scheme with an authority.
+        ("http://example.org/ns/doc", "http://example.org/x?", "/x?"),
+        ("http://example.org/ns/doc", "http://example.org/a//b", "/a//b"),
+        ("s3://bucket/doc", "s3://bucket/x", "/x"),
+        # A path takes the base's scheme as written, and "file:/tmp" has no
+        # authority for it to take: neither would resolve back.
+        ("HTTP://example.org/ns/doc", "http://example.org/other", None),
+        ("file:/tmp/doc.jsonld", "file:///x", None),
+    ],
+)
+def test_shrinking_iris_against_the_base(
+    base: str, iri: str, expected: Optional[str]
+) -> None:
+    """A shortened IRI must resolve back to the IRI; otherwise it stays whole."""
+    ctx = Context({"@base": base})
+
+    shrunk = ctx.shrink_iri(URIRef(iri))
+
+    assert shrunk == (URIRef(iri) if expected is None else expected)
+    assert str(ctx.resolve_iri(shrunk)) == iri
+    # urllib's resolver gives a shortened IRI back too, where it follows RFC
+    # 3986: it drops an empty query, and joins paths only for the schemes in
+    # urllib.parse.uses_relative.
+    if expected is not None and iri not in {
+        "http://example.org/x?",
+        "s3://bucket/x",
+    }:
+        assert urljoin(base, expected) == iri
+
+
+def test_a_compact_iri_that_expands_elsewhere_gives_way_to_a_path() -> None:
+    """A redefined prefix is not used, and the base can still shorten the IRI."""
+    ctx = Context(
+        [
+            {"@base": "http://example.org/ns/doc"},
+            {"ex": "http://example.org/"},
+            {"ex": "http://other.org/"},
+        ]
+    )
+
+    assert ctx.shrink_iri(URIRef("http://example.org/s")) == "/s"
+
+
+@pytest.mark.parametrize(
+    "iri",
+    [
+        "http://example.org",
+        "http://example.org.evil/x",
+        "http://example.org?q=1",
+        "http://example.org/other",
+    ],
+)
+@pytest.mark.parametrize("base", ["http://example.org/ns/doc", "s3://example.org/doc"])
+def test_an_iri_on_the_base_host_round_trips(iri: str, base: str) -> None:
+    iri = iri.replace("http:", base.split(":", 1)[0] + ":", 1)
+    g = Graph()
+    g.add((URIRef("http://example.org/s"), URIRef("http://example.org/p"), URIRef(iri)))
+
+    data = g.serialize(format="json-ld", base=base, context={"@base": base})
+    g2 = Graph()
+    g2.parse(data=data, format="json-ld")
+
+    assert list(g2.objects()) == [URIRef(iri)]
+
+
 def test_accessing_keyword_values_by_alias():
     ctx = Context({"iri": "@id", "lang": "@language"})
     assert ctx.get_id({"iri": "urn:x:1"}) == "urn:x:1"
@@ -136,6 +236,106 @@ def test_prefix_like_vocab():
     ctx = Context({"@vocab": "ex:", "term": "ex:term"})
     term = ctx.terms.get("term")
     assert term.id == "ex:term"
+
+
+@pytest.mark.parametrize(
+    ("vocab", "term", "value", "expected_id", "expected_property"),
+    [
+        # A term without ":" and "/" whose IRI ends with a gen-delim is a prefix.
+        ("http://other.org/", "a", "a:b", *["http://other.org/a/b"] * 2),
+        # A term with a "/" is not. As an @id, the value is then resolved
+        # against the base; as a property or type, it is relative to @vocab.
+        # Each context is valid: the term expands to its IRI through @vocab
+        # (step 14.2.4.2).
+        (
+            "http://other.org",
+            "/a/",
+            "/a/:b",
+            "http://example.org/a/:b",
+            "http://other.org/a/:b",
+        ),
+        (
+            "http://other.org/",
+            "a/",
+            "a/:b",
+            "http://example.org/ns/a/:b",
+            "http://other.org/a/:b",
+        ),
+    ],
+)
+def test_only_a_term_without_a_slash_is_a_prefix(
+    vocab: str, term: str, value: str, expected_id: str, expected_property: str
+) -> None:
+    """JSON-LD 1.1 API, Create Term Definition, step 14.2.5."""
+    ctx = Context(
+        {
+            "@base": "http://example.org/ns/doc",
+            "@vocab": vocab,
+            term: "http://other.org/a/",
+            "t": value,
+        }
+    )
+
+    assert ctx.expand(value, use_vocab=False) == expected_id
+    assert ctx.expand(value) == expected_property
+    # A value in the context is expanded as a property is.
+    assert ctx.terms["t"].id == expected_property
+
+
+def test_a_term_name_with_a_colon_takes_the_iri_of_its_prefix_term() -> None:
+    """Create Term Definition, step 15: no prefix flag is needed for a name."""
+    ctx = Context(
+        {
+            "@vocab": "http://other.org",
+            "/a/": "http://other.org/a/",
+            # No @id, and an @id equal to the term, which step 14 leaves to 15.
+            "/a/:b": {"@type": "@id"},
+            "/a/:c": "/a/:c",
+        }
+    )
+
+    assert ctx.terms["/a/:b"].id == "http://other.org/a/b"
+    assert ctx.terms["/a/:c"].id == "http://other.org/a/c"
+
+
+def test_a_term_with_a_colon_is_not_a_prefix() -> None:
+    ctx = Context({"ex": "http://example.org/", "ex:a/": "http://example.org/a/"})
+
+    assert ctx.terms["ex"].prefix is True
+    assert ctx.terms["ex:a/"].prefix is False
+
+
+@pytest.mark.parametrize("other", ["ex2/", "ex2:"])
+def test_the_serializer_uses_a_prefix_without_a_slash_or_colon(other: str) -> None:
+    g = Graph()
+    g.add(
+        (
+            URIRef("http://example.org/s"),
+            URIRef("http://example.org/p"),
+            URIRef("http://example.org/o"),
+        )
+    )
+    context = {"ex": "http://example.org/", other: "http://example.org/"}
+
+    data = json.loads(g.serialize(format="json-ld", context=context))
+
+    assert data["@id"] == "ex:s"
+    assert data["ex:p"] == {"@id": "ex:o"}
+
+
+def test_a_reference_like_a_compact_iri_with_a_slash_round_trips() -> None:
+    iri = URIRef("http://example.org/a/:b")
+    context = {
+        "@base": "http://example.org/ns/doc",
+        "@vocab": "http://other.org",
+        "/a/": "http://other.org/a/",
+    }
+    g = Graph()
+    g.add((URIRef("http://example.org/s"), URIRef("http://example.org/p"), iri))
+
+    data = g.serialize(format="json-ld", context=context)
+
+    assert list(Graph().parse(data=data, format="json-ld").objects()) == [iri]
 
 
 # Mock external sources loading

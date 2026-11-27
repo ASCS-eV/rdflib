@@ -302,8 +302,8 @@ class OrigTurtleSerializer(RecursiveSerializer):
                     continue
             # Don't use generated prefixes for subjects and objects
             self.get_pname(node, gen_prefix=(i == VERB))
-            if isinstance(node, Literal) and node.datatype:
-                self.get_pname(node.datatype, gen_prefix=_GEN_QNAME_FOR_DT)
+            if isinstance(node, Literal) and node._written_datatype:
+                self.get_pname(node._written_datatype, gen_prefix=_GEN_QNAME_FOR_DT)
         p = triple[1]
         if isinstance(p, BNode):  # hmm - when is P ever a bnode?
             self._references[p] += 1
@@ -345,9 +345,11 @@ class OrigTurtleSerializer(RecursiveSerializer):
 
         return "%s:%s" % (prefix, local)
 
-    def get_q_name(self, uri: Node, gen_prefix: bool = True) -> Optional[str]:
+    def getQName(  # noqa: N802
+        self, uri: Node, gen_prefix: bool = True
+    ) -> Optional[str]:
         warnings.warn(
-            "TurtleSerializer.get_q_name is deprecated, use TurtleSerializer.get_pname instead.",
+            "OrigTurtleSerializer.getQName is deprecated, use OrigTurtleSerializer.get_pname instead.",
             DeprecationWarning,
             stacklevel=2,
         )
